@@ -1,2 +1,2 @@
-pt/
-# Ignore personal access token files
+pat.txt
+*.pat
