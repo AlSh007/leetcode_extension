@@ -66,8 +66,4 @@ If something fails, check these logs:
 - Extension service worker console (background.js logs): chrome://extensions → Service worker → Inspect views
 
 License
-- Use as you wish. Ensure you do not publish PATs or private repo information.
-
-If you want, I can:
-- Add a small tests checklist or example screenshot of the generated folder structure.
-- Add stricter language → extension filename mapping (e.g. map "Python3"
+- Fork the repo, do not clone! Ensure you do not publish PATs or private repo information.
