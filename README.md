@@ -4,14 +4,14 @@ Automatically push your accepted LeetCode solutions to GitHub with complete form
 
 ## ✨ Features
 
-- 🚀 **Automatic Push** - Solutions are pushed to GitHub automatically when accepted
-- 🎨 **Perfect Formatting** - Preserves Python indentation and all code formatting
-- 📝 **Rich Metadata** - Includes problem description, difficulty, tags, and acceptance rate
-- 🔄 **Smart Extraction** - Multiple strategies ensure complete code capture
+- ✅ **Automatic Push** - Solutions are pushed to GitHub automatically when accepted
+- ✅ **Perfect Formatting** - Preserves Python indentation and all code formatting
+- ✅ **Rich Metadata** - Includes problem description, difficulty, tags, and acceptance rate
+- ✅ **Smart Extraction** - Multiple strategies ensure complete code capture
 - ✅ **Order Correction** - Automatically detects and fixes reversed code
-- 🐍 **Python-Optimized** - Special validation for Python indentation and structure
+- ✅ **Python-Optimized** - Special validation for Python indentation and structure
 
-## 📋 Table of Contents
+## ¡ Table of Contents
 
 - [Installation](#installation)
 - [Setup](#setup)
@@ -20,7 +20,7 @@ Automatically push your accepted LeetCode solutions to GitHub with complete form
 - [Troubleshooting](#troubleshooting)
 - [How It Works](#how-it-works)
 
-## 🔧 Installation
+## ¤ Installation
 
 ### 1. Create GitHub Personal Access Token
 
@@ -49,7 +49,7 @@ Automatically push your accepted LeetCode solutions to GitHub with complete form
 
 ✅ You're all set! The extension is now ready to use.
 
-## 🎯 Usage
+## ¡ Usage
 
 ### Basic Workflow
 
@@ -69,14 +69,14 @@ For debugging or to see what's happening:
 
 Expected console output:
 ```
-[LeetCode Extension] 🚀 Submit button clicked!
+[LeetCode Extension] ✅ Submit button clicked!
 [LeetCode Extension] ✅ Extracted code via Monaco Model API
 [LeetCode Extension] Code Extraction Summary: {method: "monaco-model-api", lines: 15, ...}
 [LeetCode Extension] Attempting to push to GitHub...
 [LeetCode Extension] ✅ Successfully pushed to GitHub!
 ```
 
-## 📦 What Gets Pushed?
+## ¤ What Gets Pushed?
 
 For each accepted solution, the extension creates a folder in your repository:
 
@@ -122,7 +122,7 @@ Given an array of positive integers nums, remove the smallest subarray...
 - Make_Sum_Divisible_by_P.py
 ```
 
-## 🐛 Troubleshooting
+## ⃣ Troubleshooting
 
 ### Code Not Pushing to GitHub
 
@@ -135,115 +135,4 @@ Given an array of positive integers nums, remove the smallest subarray...
 
 **Common issues:**
 
-- ❌ **"Repo or token not set"** → Configure extension via popup
-- ❌ **"GitHub API failed (401)"** → Invalid/expired token, create a new one
-- ❌ **"GitHub API failed (404)"** → Repository doesn't exist or wrong name format
-- ❌ **"No pending submission found"** → Must click Submit BEFORE solution is accepted
-
-### Code in Wrong Order
-
-The extension automatically detects and corrects reversed code. If you see:
-
-```
-[LeetCode Extension] ⚠️ Code appears to be in REVERSE order - auto-correcting!
-[LeetCode Extension] ✅ Code order corrected!
-```
-
-This means the extension fixed the line order before pushing to GitHub.
-
-### Missing Indentation
-
-If Python code has no indentation, check console for:
-
-```
-[LeetCode Extension] ⚠️ WARNING: Python code lacks indentation - may be corrupted!
-```
-
-**Solution:** Reload the extension:
-1. Go to `chrome://extensions/`
-2. Click the reload icon ↻ on "LeetCode to GitHub"
-3. Refresh your LeetCode page (`Ctrl+Shift+R`)
-
-### Language Detected as "Comment"
-
-If you see:
-```
-[LeetCode Extension] ⚠️ Could not detect language, defaulting to py (Python)
-```
-
-The extension will use `.py` as default. This is fine if you're coding in Python!
-
-### Nothing Happens
-
-**Checklist:**
-- ✅ Extension is enabled in `chrome://extensions/`
-- ✅ You clicked **Submit** button (not just "Run")
-- ✅ Solution got **"Accepted"** status
-- ✅ Repository and token are configured in extension popup
-- ✅ GitHub repository exists and token has `repo` permissions
-
-## 🔬 How It Works
-
-### Code Extraction Strategies (in order)
-
-1. **Monaco Model API** (Primary)
-   - Accesses Monaco editor's internal data model
-   - Returns complete code in correct order
-   - Most reliable method
-
-2. **Monaco Editor Instance**
-   - Direct access via DOM element property
-   - Fallback if global Monaco API unavailable
-
-3. **View-Lines with Sorting**
-   - Reads `.view-line` DOM elements
-   - Sorts by CSS `top` position for correct order
-   - Handles virtual scrolling
-
-4. **Textarea Fallback**
-   - For older LeetCode UI
-   - Backward compatibility
-
-5. **Container Text**
-   - Last resort
-   - May be incomplete
-
-### Validation & Auto-Correction
-
-- **Line Order Detection**: Checks if `class`/`def` appear at top
-- **Auto-Reversal**: Flips code if detected as backwards
-- **Python Validation**: Verifies indentation and structure
-- **Completeness Check**: Warns if code seems too short
-
-### Push Process
-
-1. **Submit Click**: Captures problem metadata
-2. **Accepted Detection**: Extracts code using best available method
-3. **Validation**: Checks order, indentation, completeness
-4. **GitHub API**: Creates/updates folder with solution and README
-5. **Confirmation**: Logs success in console
-
-## 📝 Notes
-
-- **Supported Languages**: Python, Java, C++, JavaScript, TypeScript, and all LeetCode languages
-- **File Naming**: Problem title with underscores (e.g., `Two_Sum.py`)
-- **Updates**: Re-submitting updates the existing file (no duplicates)
-- **Privacy**: Token is stored locally in Chrome storage only
-
-## 🤝 Contributing
-
-Found a bug or have a suggestion? Feel free to:
-- Report issues
-- Submit pull requests
-- Suggest improvements
-
-## 📄 License
-
-This extension is provided as-is for personal use.
-
----
-
-**Happy Coding! 🚀**
-
-*Made with ❤️ for LeetCode enthusiasts*
-
+- Ñ **"Repo or token not set"** → Configure extension via popup
