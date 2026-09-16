@@ -35,6 +35,33 @@
     }
   }
 
+  const LANGUAGE_EXTENSIONS = {
+    python: 'py', python3: 'py',
+    java: 'java',
+    'c++': 'cpp', cpp: 'cpp',
+    c: 'c',
+    'c#': 'cs', csharp: 'cs',
+    javascript: 'js',
+    typescript: 'ts',
+    ruby: 'rb',
+    swift: 'swift',
+    go: 'go', golang: 'go',
+    scala: 'scala',
+    kotlin: 'kt',
+    rust: 'rs',
+    php: 'php',
+    mysql: 'sql', mssql: 'sql', oracle: 'sql', sql: 'sql', postgresql: 'sql',
+    bash: 'sh', shell: 'sh',
+    dart: 'dart',
+    racket: 'rkt',
+    erlang: 'erl',
+    elixir: 'ex'
+  };
+
+  function getFileExtension(lang) {
+    return LANGUAGE_EXTENSIONS[(lang || '').toLowerCase()] || lang || 'txt';
+  }
+
   function getLanguage() {
     // List of known programming languages to validate against
     const knownLanguages = ['python', 'python3', 'java', 'c++', 'c', 'c#', 'csharp', 'javascript', 'typescript', 
@@ -445,9 +472,9 @@
         console.log('[LeetCode Extension] Sending to GitHub:', repo);
         const dirName = solution.problemTitle;
         try {
-          chrome.runtime.sendMessage({ 
-            action: 'pushToGitHub', 
-            filename: `${solution.problemTitle}.${solution.lang}`, 
+          chrome.runtime.sendMessage({
+            action: 'pushToGitHub',
+            filename: `${solution.problemTitle}.${getFileExtension(solution.lang)}`,
             code: solution.code, 
             language: solution.lang, 
             repo, 
