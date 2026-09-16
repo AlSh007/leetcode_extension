@@ -75,7 +75,9 @@
       ".ant-select-selection-item",
       "select[data-cy='lang-select']",
       "[class*='lang'] button",
-      "div[class*='lang'] button"
+      "div[class*='lang'] button",
+      "button[aria-haspopup='dialog']", // Current (Radix UI) LeetCode language dropdown
+      "button" // Last-resort catch-all; the known-language whitelist below keeps this safe
     ];
     
     for (const selector of selectors) {
