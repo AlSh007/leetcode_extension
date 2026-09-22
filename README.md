@@ -7,8 +7,8 @@ Automatically push your accepted LeetCode solutions to GitHub with complete form
 - 🚀 **Automatic Push** - Solutions are pushed to GitHub automatically when accepted
 - 🎨 **Perfect Formatting** - Preserves Python indentation and all code formatting
 - 📝 **Rich Metadata** - Includes problem description, difficulty, tags, and acceptance rate
-- 🔄 **Smart Extraction** - Multiple strategies ensure complete code capture
-- ✅ **Order Correction** - Automatically detects and fixes reversed code
+- 🔄 **Complete Capture** - Reads the whole Monaco buffer, not just the lines on screen
+- 🛑 **Fails Loudly** - Refuses to push rather than committing a partial file
 - 🐍 **Python-Optimized** - Special validation for Python indentation and structure
 
 ## 📋 Table of Contents
@@ -70,8 +70,7 @@ For debugging or to see what's happening:
 Expected console output:
 ```
 [LeetCode Extension] 🚀 Submit button clicked!
-[LeetCode Extension] ✅ Extracted code via Monaco Model API
-[LeetCode Extension] Code Extraction Summary: {method: "monaco-model-api", lines: 15, ...}
+[LeetCode Extension] Code Extraction Summary: {method: "monaco-model-bridge", lines: 15, editorReportedLines: 15, ...}
 [LeetCode Extension] Attempting to push to GitHub...
 [LeetCode Extension] ✅ Successfully pushed to GitHub!
 ```
@@ -140,16 +139,27 @@ Given an array of positive integers nums, remove the smallest subarray...
 - ❌ **"GitHub API failed (404)"** → Repository doesn't exist or wrong name format
 - ❌ **"No pending submission found"** → Must click Submit BEFORE solution is accepted
 
-### Code in Wrong Order
+### Only Part of the Code Was Pushed
 
-The extension automatically detects and corrects reversed code. If you see:
+This was a real bug, fixed in v1.1. Monaco only keeps DOM nodes for the lines
+currently scrolled into view, and the old extractor scraped those nodes — so a
+file longer than the editor viewport was pushed truncated. v1.1 reads the editor's
+text model instead, via a MAIN-world bridge, and never scrapes the DOM.
+
+If you are on v1.1 and nothing pushes at all, look for:
 
 ```
-[LeetCode Extension] ⚠️ Code appears to be in REVERSE order - auto-correcting!
-[LeetCode Extension] ✅ Code order corrected!
+[LeetCode Extension] ❌ Could not read the editor buffer: <reason>
 ```
 
-This means the extension fixed the line order before pushing to GitHub.
+| Reason | Meaning |
+|---|---|
+| `bridge-not-installed` | `monaco-bridge.js` did not load — reload the extension and hard-refresh the page |
+| `monaco-not-loaded` | The editor had not mounted yet; resubmit |
+| `no-model` / `empty-model` | No editor buffer found, or it was blank |
+
+The extension deliberately pushes nothing in these cases rather than committing a
+partial file, because a truncated push looks like a successful one.
 
 ### Missing Indentation
 
@@ -184,34 +194,35 @@ The extension will use `.py` as default. This is fine if you're coding in Python
 
 ## 🔬 How It Works
 
-### Code Extraction Strategies (in order)
+### Code Extraction
 
-1. **Monaco Model API** (Primary)
-   - Accesses Monaco editor's internal data model
-   - Returns complete code in correct order
-   - Most reliable method
+There is one extraction path, and it reads Monaco's text model — the editor's own
+source of truth. It is complete and correctly ordered by construction, regardless
+of scroll position.
 
-2. **Monaco Editor Instance**
-   - Direct access via DOM element property
-   - Fallback if global Monaco API unavailable
+Getting at it takes a bridge. Chrome runs content scripts in an **isolated world**:
+they share the page's DOM but get their own JavaScript globals, so `content.js`
+cannot see the page's `monaco` object (nor expando properties that page scripts set
+on DOM elements). So:
 
-3. **View-Lines with Sorting**
-   - Reads `.view-line` DOM elements
-   - Sorts by CSS `top` position for correct order
-   - Handles virtual scrolling
+- **`monaco-bridge.js`** is declared with `"world": "MAIN"` and runs in the page's
+  own context, where `monaco` is reachable. It listens for a DOM event and writes a
+  JSON snapshot of the model into an inert `<script type="application/json">` node.
+- **`content.js`** (isolated world) dispatches that event and reads the node. DOM
+  event dispatch is *synchronous* and crosses the world boundary, so the snapshot is
+  already fresh when `dispatchEvent()` returns — extraction stays a plain
+  synchronous call.
 
-4. **Textarea Fallback**
-   - For older LeetCode UI
-   - Backward compatibility
+When several Monaco instances are mounted (solution editor, diff views, playground),
+the bridge prefers a model attached to a visible editor, then the largest.
 
-5. **Container Text**
-   - Last resort
-   - May be incomplete
+**There is no DOM-scraping fallback, by design.** Scraping `.view-line` nodes only
+ever yields the lines on screen; committing that is worse than committing nothing,
+because a truncated file looks like a successful push.
 
-### Validation & Auto-Correction
+### Validation
 
-- **Line Order Detection**: Checks if `class`/`def` appear at top
-- **Auto-Reversal**: Flips code if detected as backwards
+- **Line Count Cross-Check**: Warns if the snapshot disagrees with the model
 - **Python Validation**: Verifies indentation and structure
 - **Completeness Check**: Warns if code seems too short
 
@@ -229,6 +240,16 @@ The extension will use `.py` as default. This is fine if you're coding in Python
 - **File Naming**: Problem title with underscores (e.g., `Two_Sum.py`)
 - **Updates**: Re-submitting updates the existing file (no duplicates)
 - **Privacy**: Token is stored locally in Chrome storage only
+
+## 🧪 Tests
+
+```bash
+node test/bridge.test.js
+```
+
+No dependencies. The tests load `monaco-bridge.js` and `content.js` into **separate**
+JS contexts sharing one DOM, mirroring Chrome's isolated/MAIN world split, and assert
+that a 200-line file rendered 20 lines at a time is captured in full.
 
 ## 🤝 Contributing
 

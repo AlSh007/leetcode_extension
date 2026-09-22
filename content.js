@@ -1,5 +1,6 @@
 // Content script: detect LeetCode Submit -> Accepted and push solution to GitHub
-// - Preserves Monaco editor formatting by reading `.view-line` elements
+// - Reads the complete Monaco buffer via monaco-bridge.js (MAIN world), because
+//   `.view-line` nodes only exist for the lines currently scrolled into view
 // - Captures metadata at Submit click time to avoid losing it after DOM changes
 // - Uses an immediate-ack pattern: background sends an immediate response and does work asynchronously
 
@@ -106,192 +107,94 @@
     return 'py';  // Default to Python since that's what user mentioned they mainly use
   }
 
-  function getSolution() {
-    let code = null;
-    let extractionMethod = 'unknown';
-    
-    // STRATEGY 1: Access Monaco's internal model API (most reliable - gets complete code in correct order)
+  // ---------------------------------------------------------------------------
+  // Monaco bridge (see monaco-bridge.js)
+  //
+  // Monaco virtualizes rendering: `.view-line` nodes exist only for the lines
+  // currently scrolled into view. Scraping them captures what is on screen and
+  // silently truncates the rest -- which is what used to get pushed to GitHub.
+  // The complete buffer lives on the text model, but `monaco` is a page global
+  // and this script runs in an isolated world, so it cannot reach it directly.
+  //
+  // monaco-bridge.js runs in the MAIN world and answers the DOM event below by
+  // writing a JSON snapshot into a shared mirror node. DOM dispatch is
+  // synchronous and crosses the world boundary, so the mirror is already fresh
+  // when dispatchEvent() returns and getSolution() stays synchronous.
+  // ---------------------------------------------------------------------------
+  const BRIDGE_REQUEST_EVENT = '__lc2gh_request_code';
+  const BRIDGE_MIRROR_ID = '__lc2gh_code_mirror';
+
+  function readFromBridge() {
     try {
-      // Try multiple ways to access Monaco
-      let monacoModels = null;
-      
-      // Method 1a: Direct window.monaco access
-      if (window.monaco && window.monaco.editor) {
-        monacoModels = window.monaco.editor.getModels();
-      }
-      
-      // Method 1b: Check if monaco is in a different scope
-      if (!monacoModels && typeof monaco !== 'undefined' && monaco.editor) {
-        monacoModels = monaco.editor.getModels();
-      }
-      
-      // Method 1c: Look for monaco in iframe (some implementations)
-      if (!monacoModels) {
-        const iframes = document.querySelectorAll('iframe');
-        for (const iframe of iframes) {
-          try {
-            if (iframe.contentWindow && iframe.contentWindow.monaco && iframe.contentWindow.monaco.editor) {
-              monacoModels = iframe.contentWindow.monaco.editor.getModels();
-              if (monacoModels && monacoModels.length > 0) break;
-            }
-          } catch (e) { /* Cross-origin iframe */ }
-        }
-      }
-      
-      if (monacoModels && monacoModels.length > 0) {
-        code = monacoModels[0].getValue();
-        if (code && code.trim().length > 0) {
-          extractionMethod = 'monaco-model-api';
-          console.log('[LeetCode Extension] ✅ Extracted code via Monaco Model API');
-        }
-      }
+      document.dispatchEvent(new CustomEvent(BRIDGE_REQUEST_EVENT));
     } catch (e) {
-      console.warn('[LeetCode Extension] Monaco Model API not available:', e.message);
+      return { ok: false, reason: 'dispatch-failed: ' + e.message };
     }
-    
-    // STRATEGY 2: Try to access Monaco editor instance directly
-    if (!code) {
-      try {
-        const editorElements = document.querySelectorAll('.monaco-editor');
-        for (const editorEl of editorElements) {
-          // Monaco attaches editor instance to DOM element
-          const editorInstance = editorEl && editorEl.__monaco_editor;
-          if (editorInstance && typeof editorInstance.getValue === 'function') {
-            code = editorInstance.getValue();
-            if (code && code.trim().length > 0) {
-              extractionMethod = 'monaco-instance';
-              console.log('[LeetCode Extension] ✅ Extracted code via Monaco Editor Instance');
-              break;
-            }
-          }
-        }
-      } catch (e) {
-        console.warn('[LeetCode Extension] Monaco instance extraction failed:', e.message);
-      }
+
+    const node = document.getElementById(BRIDGE_MIRROR_ID);
+    if (!node) return { ok: false, reason: 'bridge-not-installed' };
+
+    try {
+      const payload = JSON.parse(node.textContent || '{}');
+      if (!payload || typeof payload !== 'object') return { ok: false, reason: 'bad-payload' };
+      return payload;
+    } catch (e) {
+      return { ok: false, reason: 'unparseable-payload: ' + e.message };
     }
-    
-    // STRATEGY 3: Read .view-line elements WITH PROPER ORDERING
-    if (!code) {
-      try {
-        const viewLines = document.querySelectorAll('.view-lines .view-line');
-        if (viewLines && viewLines.length > 0) {
-          // Extract lines with their positions
-          const lineData = Array.from(viewLines).map((el, index) => {
-            // Try to get line number from various attributes
-            const lineNum = el.getAttribute('data-line-number') 
-                         || el.getAttribute('aria-label')?.match(/Line (\d+)/)?.[1]
-                         || el.style.top; // Monaco uses top position for line ordering
-            
-            const text = el.innerText || el.textContent || '';
-            const cleanText = text.replace(/\u200B/g, ''); // Remove zero-width spaces
-            
-            return {
-              lineNum: lineNum ? parseFloat(lineNum) : index,
-              text: cleanText,
-              top: parseFloat(el.style.top) || (index * 20), // Fallback to index-based ordering
-              element: el
-            };
-          });
-          
-          // Sort by top position (Monaco uses CSS top for line positioning)
-          lineData.sort((a, b) => a.top - b.top);
-          
-          // Join the sorted lines
-          const lines = lineData.map(item => item.text);
-          code = lines.join('\n').replace(/\r\n?/g, '\n').trim();
-          
-          if (code && code.length > 0) {
-            extractionMethod = 'monaco-view-lines-sorted';
-            console.log('[LeetCode Extension] ✅ Extracted code via Monaco view-lines (sorted by position)');
-          }
-        }
-      } catch (e) {
-        console.warn('[LeetCode Extension] Monaco view-lines extraction failed:', e.message);
-      }
-    }
-    
-    // STRATEGY 4: Try textarea (for older LeetCode UI or fallback)
-    if (!code) {
-      const textarea = document.querySelector('textarea, .CodeMirror textarea, .react-monaco-container textarea');
-      if (textarea && (textarea.value || textarea.textContent)) {
-        code = (textarea.value || textarea.textContent || '').replace(/\u200B/g, '').replace(/\r\n?/g, '\n').trim();
-        if (code && code.length > 0) {
-          extractionMethod = 'textarea';
-          console.log('[LeetCode Extension] ✅ Extracted code via textarea');
-        }
-      }
-    }
-    
-    // STRATEGY 5: Try container elements (last resort)
-    if (!code) {
-      const container = document.querySelector('.view-lines, .monaco-editor, .view-code, .code-textarea, .ace_content');
-      if (container) {
-        code = (container.textContent || container.innerText || '').replace(/\u200B/g, '').replace(/\r\n?/g, '\n').trim();
-        if (code && code.length > 0) {
-          extractionMethod = 'container-text';
-          console.log('[LeetCode Extension] ⚠️ Extracted code via container (may be incomplete)');
-        }
-      }
-    }
-    
-    // Validation and logging
-    if (!code || code.length === 0) {
-      console.error('[LeetCode Extension] ❌ Failed to extract code - all strategies failed');
-      return null;
-    }
-    
-    const lineCount = code.split('\n').length;
-    const charCount = code.length;
-    const codeLines = code.split('\n');
-    const firstLine = codeLines[0]?.trim() || '';
-    const lastLine = codeLines[lineCount - 1]?.trim() || '';
-    
-    // DETECT AND FIX REVERSED CODE ORDER
-    // Common patterns that should be at the start of code
-    const shouldBeFirst = /^(class\s+\w+|def\s+\w+|import\s+|from\s+|package\s+|public\s+class|var\s+|let\s+|const\s+|function\s+)/i;
-    // Common patterns that should be at the end
-    const shouldBeLast = /^(return\s+|}\s*$|pass\s*$|\)\s*$)/i;
-    
-    const firstLineMatches = shouldBeFirst.test(firstLine);
-    const lastLineMatches = shouldBeLast.test(lastLine);
-    const firstLineWrong = shouldBeLast.test(firstLine);
-    const lastLineWrong = shouldBeFirst.test(lastLine);
-    
-    // If code appears to be reversed (last line has class/def, first line has return/})
-    if (!firstLineMatches && lastLineWrong && (firstLineWrong || !shouldBeFirst.test(lastLine))) {
-      console.warn('[LeetCode Extension] ⚠️ Code appears to be in REVERSE order - auto-correcting!');
-      console.log('[LeetCode Extension] Before reversal - First:', firstLine.substring(0, 50), 'Last:', lastLine.substring(0, 50));
-      
-      // Reverse the lines
-      code = codeLines.reverse().join('\n').trim();
-      
-      const newFirstLine = code.split('\n')[0]?.trim() || '';
-      const newLastLine = code.split('\n')[code.split('\n').length - 1]?.trim() || '';
-      console.log('[LeetCode Extension] After reversal - First:', newFirstLine.substring(0, 50), 'Last:', newLastLine.substring(0, 50));
-      console.log('[LeetCode Extension] ✅ Code order corrected!');
-    }
-    
-    // Log extraction details for debugging
-    console.log('[LeetCode Extension] Code Extraction Summary:', {
-      method: extractionMethod,
-      lines: lineCount,
-      characters: charCount,
-      firstLine: code.split('\n')[0]?.substring(0, 50) || '',
-      lastLine: code.split('\n')[code.split('\n').length - 1]?.substring(0, 50) || ''
-    });
-    
-    // Validate code doesn't look suspiciously incomplete
-    if (lineCount < 3 && charCount < 50) {
-      console.warn('[LeetCode Extension] ⚠️ Warning: Code seems very short (might be incomplete)');
-    }
-    
+  }
+
+  function getSolution() {
     const problemTitle = (document.title || '').replace(/\s*-\s*LeetCode.*$/i, '').trim().replace(/\s+/g, '_');
     const lang = getLanguage();
     const descEl = document.querySelector('.question-content, .question-content__JfgR, .content, .description, .question__content, [class*="elfjS"]');
     const description = descEl ? (descEl.innerText || '').trim() : '';
-    
-    return { code, problemTitle, lang, description, extractionMethod, lineCount, charCount };
+
+    const snapshot = readFromBridge();
+
+    // No buffer means no push. There is deliberately no DOM-scraping fallback:
+    // it would commit only the visible lines, which is worse than committing
+    // nothing, because a truncated file looks like a successful push.
+    if (!snapshot.ok) {
+      console.error('[LeetCode Extension] ❌ Could not read the editor buffer:', snapshot.reason);
+      console.error('[LeetCode Extension] Not falling back to DOM scraping - it would capture only the lines on screen. Nothing will be pushed.');
+      return { code: null, bridgeError: snapshot.reason, problemTitle, lang, description, extractionMethod: 'none', lineCount: 0, charCount: 0 };
+    }
+
+    const code = String(snapshot.code || '').replace(/\r\n?/g, '\n');
+    const lineCount = code.split('\n').length;
+    const charCount = code.length;
+
+    // The model is the source of truth for line order, so the old
+    // sort-by-CSS-top and auto-reverse heuristics are gone with the scraping.
+    if (snapshot.lineCount && snapshot.lineCount !== lineCount) {
+      console.warn('[LeetCode Extension] ⚠️ Line count mismatch - model reports', snapshot.lineCount, 'but snapshot has', lineCount);
+    }
+
+    console.log('[LeetCode Extension] Code Extraction Summary:', {
+      method: 'monaco-model-bridge',
+      lines: lineCount,
+      characters: charCount,
+      editorReportedLines: snapshot.lineCount,
+      monacoLanguageId: snapshot.languageId || '(unknown)',
+      firstLine: code.split('\n')[0]?.substring(0, 50) || '',
+      lastLine: code.split('\n')[lineCount - 1]?.substring(0, 50) || ''
+    });
+
+    return {
+      code,
+      problemTitle,
+      lang,
+      description,
+      extractionMethod: 'monaco-model-bridge',
+      lineCount,
+      charCount,
+      monacoLanguageId: snapshot.languageId || ''
+    };
   }
+
+  // Test seam for test/bridge.test.js, which drives the real extraction path.
+  window.__leetcodePush.__getSolution = getSolution;
+
 
   function collectMetadata() {
     const url = location.href;
