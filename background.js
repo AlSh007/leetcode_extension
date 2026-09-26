@@ -1,4 +1,128 @@
+// --- AI features (Groq or OpenAI) -------------------------------------------
+// Entirely optional: every handler below checks for a stored API key first and
+// responds with `aiUnavailable: true` if it's missing, rather than throwing.
+// The GitHub push flow above/below never depends on any of this.
+//
+// Two providers are supported side by side, picked in the popup via `aiProvider`
+// (defaults to "groq" - the free option - if unset or unrecognized). Each has
+// its own optional key in storage; only the selected provider's key is used.
+
+const AI_PROVIDERS = {
+  groq: {
+    // Groq gates/deprecates models with little notice - if this ever 404s with
+    // "model_not_found" again, check https://console.groq.com/docs/models for
+    // what's currently generally available (not Enterprise-tier-only).
+    url: "https://api.groq.com/openai/v1/chat/completions",
+    model: "openai/gpt-oss-120b",
+    keyName: "groqApiKey",
+    label: "Groq"
+  },
+  openai: {
+    url: "https://api.openai.com/v1/chat/completions",
+    model: "gpt-5.6-luna",
+    keyName: "openaiApiKey",
+    label: "OpenAI"
+  }
+};
+
+function getActiveProvider(stored) {
+  const providerId = AI_PROVIDERS[stored.aiProvider] ? stored.aiProvider : "groq";
+  const providerConfig = AI_PROVIDERS[providerId];
+  return { providerConfig, apiKey: stored[providerConfig.keyName] };
+}
+
+function callChatCompletion(providerConfig, apiKey, messages, sendResponse, resultKey) {
+  fetch(providerConfig.url, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${apiKey}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ model: providerConfig.model, messages, temperature: 0.3, max_tokens: 1000 })
+  })
+    .then(res => {
+      if (!res.ok) return res.text().then(t => { throw new Error(`${providerConfig.label} API failed (${res.status}): ${t}`); });
+      return res.json();
+    })
+    .then(data => {
+      const content = data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
+      if (!content) throw new Error(`${providerConfig.label} API returned no content`);
+      sendResponse({ success: true, [resultKey]: content.trim() });
+    })
+    .catch(err => {
+      console.error(`[LeetCode Extension BG] ${providerConfig.label} API error:`, err);
+      sendResponse({ success: false, error: err.message });
+    });
+}
+
+function handleAnalyzeComplexity(request, sendResponse) {
+  const { code, description, lang } = request;
+  if (!code || !code.trim()) {
+    sendResponse({ success: false, error: "No code to analyze" });
+    return;
+  }
+  chrome.storage.sync.get(["aiProvider", "groqApiKey", "openaiApiKey"], (stored) => {
+    const { providerConfig, apiKey } = getActiveProvider(stored);
+    if (!apiKey) {
+      sendResponse({ success: false, aiUnavailable: true, error: `${providerConfig.label} API key not set. Add one in the extension popup to enable AI features.` });
+      return;
+    }
+    const messages = [
+      {
+        role: "system",
+        content: "You are a precise algorithm complexity analyst. Given a problem description and a code solution, respond with the time complexity and space complexity in Big-O notation, each on its own line, followed by a 1-2 sentence justification. Be concise. Do not restate the code."
+      },
+      {
+        role: "user",
+        content: `Problem:\n${description || "(no description captured)"}\n\nLanguage: ${lang || "unknown"}\n\nCode:\n${code}`
+      }
+    ];
+    callChatCompletion(providerConfig, apiKey, messages, sendResponse, "result");
+  });
+}
+
+function handleGetHint(request, sendResponse) {
+  const { description, level, code } = request;
+  if (!description || !description.trim()) {
+    sendResponse({ success: false, error: "No problem description captured yet - open a problem page first" });
+    return;
+  }
+  chrome.storage.sync.get(["aiProvider", "groqApiKey", "openaiApiKey"], (stored) => {
+    const { providerConfig, apiKey } = getActiveProvider(stored);
+    if (!apiKey) {
+      sendResponse({ success: false, aiUnavailable: true, error: `${providerConfig.label} API key not set. Add one in the extension popup to enable AI features.` });
+      return;
+    }
+    const levelPrompts = {
+      1: "Give a level-1 hint: a short conceptual nudge pointing toward the right algorithmic pattern or data structure. Do not name the final approach outright, and do not give code or pseudocode.",
+      2: "Give a level-2 hint: describe the general approach and algorithm in plain words, including why it works. Do not give code or pseudocode.",
+      3: "Give a level-3 hint: describe the approach in more detail, including the key data structure(s), the main steps, and important edge cases to handle. Still do not give code or pseudocode - describe it in words only."
+    };
+    const levelPrompt = levelPrompts[level] || levelPrompts[1];
+    const messages = [
+      {
+        role: "system",
+        content: `You are a helpful LeetCode tutor giving progressive hints. ${levelPrompt} Never reveal a full solution, working code, or pseudocode, no matter what is asked.`
+      },
+      {
+        role: "user",
+        content: `Problem:\n${description}${code ? `\n\nMy current (possibly incomplete) code attempt:\n${code}` : ""}`
+      }
+    ];
+    callChatCompletion(providerConfig, apiKey, messages, sendResponse, "hint");
+  });
+}
+
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request.action === "analyzeComplexity") {
+    handleAnalyzeComplexity(request, sendResponse);
+    return true; // async response
+  }
+  if (request.action === "getHint") {
+    handleGetHint(request, sendResponse);
+    return true; // async response
+  }
+
   try {
     if (request.action !== "pushToGitHub") return;
 

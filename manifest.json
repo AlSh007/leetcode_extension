@@ -10,7 +10,9 @@
   ],
   "host_permissions": [
     "https://leetcode.com/*",
-    "https://api.github.com/*"
+    "https://api.github.com/*",
+    "https://api.groq.com/*",
+    "https://api.openai.com/*"
   ],
   "background": {
     "service_worker": "background.js"

@@ -17,6 +17,7 @@ Automatically push your accepted LeetCode solutions to GitHub with complete form
 - [Setup](#setup)
 - [Usage](#usage)
 - [What Gets Pushed](#what-gets-pushed)
+- [AI Features](#-ai-features-optional)
 - [Troubleshooting](#troubleshooting)
 - [How It Works](#how-it-works)
 
@@ -45,6 +46,7 @@ Automatically push your accepted LeetCode solutions to GitHub with complete form
 2. Enter your details:
    - **Repository**: `your-username/repo-name` (e.g., `john/leetcode-solutions`)
    - **Token**: Paste your GitHub Personal Access Token
+   - **AI provider + key** *(optional)*: pick **Groq** (free, via [console.groq.com](https://console.groq.com/keys)) or **OpenAI** (via [platform.openai.com](https://platform.openai.com/api-keys)) and paste that provider's key to enable the AI features below. Leave both blank and everything else still works exactly the same.
 3. Click **"Save"**
 
 ✅ You're all set! The extension is now ready to use.
@@ -120,6 +122,15 @@ Given an array of positive integers nums, remove the smallest subarray...
 
 - Make_Sum_Divisible_by_P.py
 ```
+
+## 🤖 AI Features (optional)
+
+A small floating 🤖 button appears on every LeetCode problem page. Click it to expand a panel with two on-demand tools, powered by whichever provider you picked in the popup - [Groq](https://console.groq.com/) (free tier) or OpenAI:
+
+- **Analyze Complexity** — reads whatever code is currently in the editor (draft or accepted, via the same Monaco-bridge extraction used for pushes) and returns its time and space complexity in Big-O notation with a short justification.
+- **Hint** — gives a progressive hint for the current problem. Each click escalates: level 1 is a conceptual nudge, level 2 describes the general approach, level 3 adds detail on data structures and edge cases. It's capped at level 3 and never returns code or pseudocode, so it can't spoil the full solution. The level resets automatically when you move to a different problem.
+
+**This is entirely optional.** If no key is configured for the selected provider, clicking either button just shows "\<Provider\> API key not set" in the panel — GitHub pushing, code extraction, and everything else keep working normally regardless.
 
 ## 🐛 Troubleshooting
 

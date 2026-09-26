@@ -143,11 +143,25 @@
     }
   }
 
+  // The CSS-module class names below (e.g. "question-content__JfgR") are
+  // generated per LeetCode frontend build and rot whenever they ship a new
+  // one - the div-based selectors are a best effort, not a guarantee. The meta
+  // description tag is populated for SEO and is far more stable, so it's a
+  // fallback of last resort when none of the div selectors matched any text.
+  function getProblemDescription() {
+    const descEl = document.querySelector('.question-content, .question-content__JfgR, .content, .description, .question__content, [class*="elfjS"]');
+    const fromDiv = descEl ? (descEl.innerText || '').trim() : '';
+    if (fromDiv) return fromDiv;
+
+    const metaEl = document.querySelector('meta[name="description"], meta[property="og:description"]');
+    const fromMeta = metaEl ? (metaEl.getAttribute('content') || '').trim() : '';
+    return fromMeta;
+  }
+
   function getSolution() {
     const problemTitle = (document.title || '').replace(/\s*-\s*LeetCode.*$/i, '').trim().replace(/\s+/g, '_');
     const lang = getLanguage();
-    const descEl = document.querySelector('.question-content, .question-content__JfgR, .content, .description, .question__content, [class*="elfjS"]');
-    const description = descEl ? (descEl.innerText || '').trim() : '';
+    const description = getProblemDescription();
 
     const snapshot = readFromBridge();
 
@@ -422,11 +436,393 @@
     } catch (err) { console.error('[LeetCode Extension] trySendIfAccepted failed:', err); }
   }
 
+  // ---------------------------------------------------------------------------
+  // Optional AI features (complexity analysis + progressive hints), via Groq or
+  // OpenAI. Entirely additive: if no key is configured for the selected
+  // provider, background.js responds with `aiUnavailable: true` and the panel
+  // just shows a message instead of a result. Nothing here is on the GitHub
+  // push's critical path.
+  //
+  // Visual language is drawn from the extension's own icon (icons/make_icons.py):
+  // the same navy gradient, the same LeetCode-orange accent, and the same
+  // "assembled from simple geometric primitives" style, rather than a generic
+  // widget look or literal robot imagery.
+  // ---------------------------------------------------------------------------
+  const AI_PANEL_ID = '__lc2gh_ai_panel';
+  const MAX_HINT_LEVEL = 3;
+
+  function nextHintLevel(currentLevel) {
+    return Math.min((currentLevel || 0) + 1, MAX_HINT_LEVEL);
+  }
+  // Test seam for test/bridge.test.js.
+  window.__leetcodePush.__nextHintLevel = nextHintLevel;
+
+  function currentProblemKey() {
+    try {
+      const sol = getSolution();
+      return (sol && sol.problemTitle) || '__unknown_problem__';
+    } catch (e) {
+      return '__unknown_problem__';
+    }
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  // Models reliably answer in light markdown (**bold**, `code`, Big-O terms).
+  // Rendering it as inline HTML instead of literal asterisks/backticks is what
+  // makes results read like a formatted answer rather than raw text. Input is
+  // escaped first, so this stays safe to feed into innerHTML even though the
+  // text originates from an LLM response - only tags this function adds itself
+  // ever reach the output.
+  function formatAIText(text) {
+    const escaped = escapeHtml(text);
+    // Split on backtick-code spans first so bold/Big-O replacements below never
+    // reach inside them (e.g. a literal "**" some model puts inside `code`).
+    return escaped.split(/(`[^`]+`)/g).map((part) => {
+      if (part.length > 1 && part.startsWith('`') && part.endsWith('`')) {
+        return `<code>${part.slice(1, -1)}</code>`;
+      }
+      return part
+        .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+        .replace(/O\([^)]*\)/g, (m) => `<code>${m}</code>`);
+    }).join('');
+  }
+
+  // Same four-point construction as a "sparkle" glyph, built as a straight-edge
+  // polygon (not a curvy blob) to match the line-and-shape style of the real
+  // extension icon. This is the panel's "AI" mark - the toggle button and
+  // nothing else, so it doesn't get diluted by reuse elsewhere.
+  const SPARK_SVG = '<svg viewBox="0 0 24 24" style="width:100%;height:100%"><polygon points="12,3 14.12,9.88 21,12 14.12,14.12 12,21 9.88,14.12 3,12 9.88,9.88" style="fill:var(--lc2gh-accent)"/></svg>';
+
+  // The "<>" chevrons from the real icon, at panel scale - ties "Complexity"
+  // back to "this is about code".
+  const CHEVRON_SVG = '<svg viewBox="0 0 24 24" style="width:100%;height:100%;fill:none;stroke:var(--lc2gh-accent);stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round">'
+    + '<polyline points="9,6 4,12 9,18"/><polyline points="15,6 20,12 15,18"/></svg>';
+
+  // A minimal lightbulb, built the same way the real icon builds its glyphs -
+  // circle + rounded rects, nothing fancier - to mark "Hint" as a distinct idea
+  // from "Complexity" while staying in the same visual family.
+  const BULB_SVG = '<svg viewBox="0 0 24 24" style="width:100%;height:100%">'
+    + '<circle cx="12" cy="10" r="6" style="fill:none;stroke:var(--lc2gh-accent);stroke-width:2"/>'
+    + '<rect x="9.5" y="15.5" width="5" height="2.4" rx="1.2" style="fill:var(--lc2gh-accent)"/>'
+    + '<rect x="10" y="18.6" width="4" height="1.6" rx="0.8" style="fill:var(--lc2gh-accent)"/></svg>';
+
+  function iconSpan(svgMarkup, sizePx) {
+    const span = document.createElement('span');
+    span.style.display = 'inline-flex';
+    span.style.width = sizePx + 'px';
+    span.style.height = sizePx + 'px';
+    span.style.flexShrink = '0';
+    span.innerHTML = svgMarkup;
+    return span;
+  }
+
+  function injectAIPanel() {
+    try {
+      if (document.getElementById(AI_PANEL_ID)) return;
+
+      const style = document.createElement('style');
+      style.textContent = `
+        #${AI_PANEL_ID} {
+          --lc2gh-bg-top: #1E2634; --lc2gh-bg-bottom: #0B0F17;
+          --lc2gh-accent: #FFA116; --lc2gh-accent-openai: #58A6FF;
+          --lc2gh-text: #E6EDF3; --lc2gh-text-dim: #8A97A8;
+          --lc2gh-border: rgba(230,237,243,0.10); --lc2gh-danger: #F85149;
+          position: fixed; bottom: 20px; right: 20px; z-index: 2147483647;
+          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+          font-size: 13px; line-height: 1.45;
+          display: flex; flex-direction: column; align-items: flex-end; gap: 10px;
+        }
+        #${AI_PANEL_ID} .__lc2gh_ai_toggle {
+          width: 44px; height: 44px; border-radius: 50%; border: none; cursor: pointer; padding: 10px;
+          background: linear-gradient(180deg, var(--lc2gh-bg-top), var(--lc2gh-bg-bottom));
+          box-shadow: 0 4px 14px rgba(0,0,0,0.45), inset 0 0 0 1px rgba(255,255,255,0.06);
+          transition: transform 0.15s ease, box-shadow 0.15s ease;
+        }
+        #${AI_PANEL_ID} .__lc2gh_ai_toggle:hover {
+          transform: scale(1.06); box-shadow: 0 6px 18px rgba(0,0,0,0.5), 0 0 0 1px var(--lc2gh-accent);
+        }
+        #${AI_PANEL_ID} .__lc2gh_ai_toggle span { transition: transform 0.2s ease; display: block; width: 100%; height: 100%; }
+        #${AI_PANEL_ID} .__lc2gh_ai_toggle.__lc2gh_ai_open span { transform: rotate(18deg); }
+        #${AI_PANEL_ID} .__lc2gh_ai_body {
+          /* A tall body pushes this fixed-position panel's TOP above the
+             viewport (it's anchored by "bottom", so it grows upward) - a
+             position:fixed element that overflows the viewport this way is
+             not reachable by scrolling the page, unlike normal content. Capping
+             max-height to the actual available space, not a fixed px value,
+             is what keeps the header and the start of long results reachable. */
+          display: none; width: 300px; max-height: min(440px, calc(100vh - 100px));
+          overflow-y: auto; box-sizing: border-box;
+          background: linear-gradient(180deg, var(--lc2gh-bg-top), var(--lc2gh-bg-bottom));
+          color: var(--lc2gh-text); border-radius: 12px; padding: 0 16px 14px;
+          box-shadow: 0 10px 30px rgba(0,0,0,0.5), inset 0 0 0 1px rgba(255,255,255,0.06);
+          opacity: 0; transform: translateY(6px) scale(0.98);
+          transition: opacity 0.16s ease, transform 0.16s ease;
+        }
+        #${AI_PANEL_ID} .__lc2gh_ai_body.__lc2gh_ai_open { display: block; opacity: 1; transform: translateY(0) scale(1); }
+        #${AI_PANEL_ID} .__lc2gh_ai_header {
+          position: sticky; top: 0; display: flex; align-items: center; justify-content: space-between;
+          margin: 0 -16px 12px; padding: 14px 16px 10px; border-bottom: 1px solid var(--lc2gh-border);
+          background: var(--lc2gh-bg-top); border-radius: 12px 12px 0 0;
+        }
+        #${AI_PANEL_ID} .__lc2gh_ai_title { font-weight: 600; }
+        #${AI_PANEL_ID} .__lc2gh_ai_provider { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--lc2gh-text-dim); }
+        #${AI_PANEL_ID} .__lc2gh_ai_provider_dot { width: 6px; height: 6px; border-radius: 50%; background: var(--lc2gh-accent); }
+        #${AI_PANEL_ID} .__lc2gh_ai_section { margin-bottom: 14px; }
+        #${AI_PANEL_ID} .__lc2gh_ai_section:last-child { margin-bottom: 0; }
+        #${AI_PANEL_ID} .__lc2gh_ai_section_head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+        #${AI_PANEL_ID} .__lc2gh_ai_section_label { display: flex; align-items: center; gap: 6px; font-weight: 600; }
+        #${AI_PANEL_ID} .__lc2gh_ai_dots { display: flex; gap: 4px; }
+        #${AI_PANEL_ID} .__lc2gh_ai_dots span {
+          width: 6px; height: 6px; border-radius: 50%; background: transparent;
+          box-shadow: inset 0 0 0 1px var(--lc2gh-text-dim);
+        }
+        #${AI_PANEL_ID} .__lc2gh_ai_dots span.__lc2gh_ai_dot_filled { background: var(--lc2gh-accent); box-shadow: none; }
+        #${AI_PANEL_ID} button.__lc2gh_ai_action {
+          width: 100%; padding: 7px 10px; border: 1px solid var(--lc2gh-border); border-radius: 6px;
+          background: rgba(255,255,255,0.03); color: var(--lc2gh-text); cursor: pointer;
+          font-size: 12.5px; font-weight: 500; text-align: left; box-sizing: border-box;
+          transition: background 0.12s ease, border-color 0.12s ease;
+        }
+        #${AI_PANEL_ID} button.__lc2gh_ai_action:hover:not(:disabled) {
+          background: rgba(255,161,22,0.08); border-color: rgba(255,161,22,0.4);
+        }
+        #${AI_PANEL_ID} button.__lc2gh_ai_action:disabled { opacity: 0.5; cursor: default; }
+        #${AI_PANEL_ID} .__lc2gh_ai_result {
+          display: none; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--lc2gh-border);
+          white-space: pre-wrap; color: var(--lc2gh-text-dim); font-size: 12.5px;
+        }
+        #${AI_PANEL_ID} .__lc2gh_ai_result.__lc2gh_ai_has_content { display: block; }
+        #${AI_PANEL_ID} .__lc2gh_ai_result.__lc2gh_ai_error { color: var(--lc2gh-danger); }
+        #${AI_PANEL_ID} .__lc2gh_ai_result code {
+          font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+          background: rgba(255,161,22,0.12); color: var(--lc2gh-accent); padding: 1px 4px; border-radius: 4px; font-size: 12px;
+        }
+        @keyframes __lc2gh_ai_pulse { 0%, 80%, 100% { opacity: .25 } 40% { opacity: 1 } }
+        #${AI_PANEL_ID} .__lc2gh_ai_loading_dots span { animation: __lc2gh_ai_pulse 1.1s infinite ease-in-out; }
+        #${AI_PANEL_ID} .__lc2gh_ai_loading_dots span:nth-child(2) { animation-delay: 0.15s; }
+        #${AI_PANEL_ID} .__lc2gh_ai_loading_dots span:nth-child(3) { animation-delay: 0.3s; }
+      `;
+      document.head.appendChild(style);
+
+      const panel = document.createElement('div');
+      panel.id = AI_PANEL_ID;
+
+      const toggle = document.createElement('button');
+      toggle.className = '__lc2gh_ai_toggle';
+      toggle.title = 'LeetCode AI Assistant';
+      toggle.appendChild(iconSpan(SPARK_SVG, 20));
+
+      const body = document.createElement('div');
+      body.className = '__lc2gh_ai_body';
+
+      const header = document.createElement('div');
+      header.className = '__lc2gh_ai_header';
+      const title = document.createElement('span');
+      title.className = '__lc2gh_ai_title';
+      title.textContent = 'AI Assistant';
+      const providerRow = document.createElement('span');
+      providerRow.className = '__lc2gh_ai_provider';
+      const providerDot = document.createElement('span');
+      providerDot.className = '__lc2gh_ai_provider_dot';
+      const providerLabel = document.createElement('span');
+      providerLabel.textContent = 'Groq';
+      providerRow.appendChild(providerDot);
+      providerRow.appendChild(providerLabel);
+      header.appendChild(title);
+      header.appendChild(providerRow);
+
+      function buildSection(iconSvg, labelText) {
+        const section = document.createElement('div');
+        section.className = '__lc2gh_ai_section';
+        const head = document.createElement('div');
+        head.className = '__lc2gh_ai_section_head';
+        const label = document.createElement('span');
+        label.className = '__lc2gh_ai_section_label';
+        label.appendChild(iconSpan(iconSvg, 14));
+        const labelText_ = document.createElement('span');
+        labelText_.textContent = labelText;
+        label.appendChild(labelText_);
+        head.appendChild(label);
+        section.appendChild(head);
+        return { section, head };
+      }
+
+      const complexitySection = buildSection(CHEVRON_SVG, 'Complexity');
+      const complexityBtn = document.createElement('button');
+      complexityBtn.className = '__lc2gh_ai_action';
+      complexityBtn.textContent = 'Analyze';
+      const complexityResult = document.createElement('div');
+      complexityResult.className = '__lc2gh_ai_result';
+      complexitySection.section.appendChild(complexityBtn);
+      complexitySection.section.appendChild(complexityResult);
+
+      const hintSection = buildSection(BULB_SVG, 'Hint');
+      const hintDots = document.createElement('span');
+      hintDots.className = '__lc2gh_ai_dots';
+      const hintDotEls = [0, 1, 2].map(() => {
+        const d = document.createElement('span');
+        hintDots.appendChild(d);
+        return d;
+      });
+      hintSection.head.appendChild(hintDots);
+      const hintBtn = document.createElement('button');
+      hintBtn.className = '__lc2gh_ai_action';
+      hintBtn.textContent = 'Get hint';
+      const hintResult = document.createElement('div');
+      hintResult.className = '__lc2gh_ai_result';
+      hintSection.section.appendChild(hintBtn);
+      hintSection.section.appendChild(hintResult);
+
+      body.appendChild(header);
+      body.appendChild(complexitySection.section);
+      body.appendChild(hintSection.section);
+      panel.appendChild(toggle);
+      panel.appendChild(body);
+      document.body.appendChild(panel);
+
+      function renderHintDots(level) {
+        hintDotEls.forEach((d, i) => d.classList.toggle('__lc2gh_ai_dot_filled', i < level));
+      }
+
+      function updateHintButton(level) {
+        renderHintDots(level);
+        if (level >= MAX_HINT_LEVEL) {
+          hintBtn.textContent = 'All hints used';
+          hintBtn.disabled = true;
+        } else {
+          hintBtn.textContent = level > 0 ? 'Next hint' : 'Get hint';
+          hintBtn.disabled = false;
+        }
+      }
+
+      function ensureHintState() {
+        window.__leetcodePush.hintLevel = window.__leetcodePush.hintLevel || {};
+      }
+
+      function refreshHintUI() {
+        ensureHintState();
+        const key = currentProblemKey();
+        updateHintButton(window.__leetcodePush.hintLevel[key] || 0);
+      }
+
+      function refreshProviderIndicator() {
+        if (!isChromeAvailable()) return;
+        try {
+          chrome.storage.sync.get(['aiProvider'], ({ aiProvider }) => {
+            const isOpenAI = aiProvider === 'openai';
+            providerLabel.textContent = isOpenAI ? 'OpenAI' : 'Groq';
+            providerDot.style.background = isOpenAI ? 'var(--lc2gh-accent-openai)' : 'var(--lc2gh-accent)';
+          });
+        } catch (e) { /* non-critical, panel still works */ }
+      }
+      refreshProviderIndicator();
+      try {
+        chrome.storage.onChanged.addListener((changes, area) => {
+          if (area === 'sync' && changes.aiProvider) refreshProviderIndicator();
+        });
+      } catch (e) { /* non-critical */ }
+
+      function clearResult(el) {
+        el.classList.remove('__lc2gh_ai_has_content', '__lc2gh_ai_error');
+        el.innerHTML = '';
+      }
+
+      function setLoading(el, label) {
+        el.classList.remove('__lc2gh_ai_error');
+        el.classList.add('__lc2gh_ai_has_content');
+        el.innerHTML = `${escapeHtml(label)}<span class="__lc2gh_ai_loading_dots"><span>.</span><span>.</span><span>.</span></span>`;
+      }
+
+      function setResult(el, text, isError) {
+        el.classList.toggle('__lc2gh_ai_error', !!isError);
+        el.classList.add('__lc2gh_ai_has_content');
+        el.innerHTML = formatAIText(text);
+      }
+
+      toggle.addEventListener('click', () => {
+        const willOpen = !body.classList.contains('__lc2gh_ai_open');
+        toggle.classList.toggle('__lc2gh_ai_open', willOpen);
+        body.classList.toggle('__lc2gh_ai_open', willOpen);
+        if (willOpen) refreshHintUI();
+      });
+
+      complexityBtn.addEventListener('click', () => {
+        if (!isChromeAvailable()) { setResult(complexityResult, 'Extension APIs unavailable.', true); return; }
+        const sol = getSolution();
+        if (!sol || !sol.code) {
+          setResult(complexityResult, 'Could not read code from the editor. Make sure a solution is open.', true);
+          return;
+        }
+        complexityBtn.disabled = true;
+        setLoading(complexityResult, 'Analyzing');
+        chrome.runtime.sendMessage(
+          { action: 'analyzeComplexity', code: sol.code, description: sol.description, lang: sol.lang },
+          (response) => {
+            complexityBtn.disabled = false;
+            if (chrome.runtime.lastError) { setResult(complexityResult, 'Error: ' + chrome.runtime.lastError.message, true); return; }
+            if (!response || !response.success) {
+              setResult(complexityResult, (response && response.error) || 'Failed to analyze complexity.', true);
+              return;
+            }
+            setResult(complexityResult, response.result, false);
+          }
+        );
+      });
+
+      hintBtn.addEventListener('click', () => {
+        if (!isChromeAvailable()) { setResult(hintResult, 'Extension APIs unavailable.', true); return; }
+        const sol = getSolution();
+        const key = (sol && sol.problemTitle) || '__unknown_problem__';
+        ensureHintState();
+        const level = nextHintLevel(window.__leetcodePush.hintLevel[key] || 0);
+        window.__leetcodePush.hintLevel[key] = level;
+        renderHintDots(level);
+        hintBtn.disabled = true;
+        setLoading(hintResult, 'Thinking');
+        chrome.runtime.sendMessage(
+          { action: 'getHint', description: sol ? sol.description : '', code: sol ? sol.code : '', level },
+          (response) => {
+            if (chrome.runtime.lastError) { updateHintButton(level); setResult(hintResult, 'Error: ' + chrome.runtime.lastError.message, true); return; }
+            if (!response || !response.success) {
+              updateHintButton(level - 1 >= 0 ? level - 1 : 0);
+              setResult(hintResult, (response && response.error) || 'Failed to get a hint.', true);
+              return;
+            }
+            updateHintButton(level);
+            setResult(hintResult, response.hint, false);
+          }
+        );
+      });
+    } catch (e) {
+      console.warn('[LeetCode Extension] AI panel injection failed:', e);
+    }
+  }
+
+  injectAIPanel();
+
+  // The AI panel (below) writes AI-generated text into the page, and any text
+  // update to an existing DOM node fires as a childList mutation (old text node
+  // removed, new one added). Without this guard, a hint or complexity result
+  // that happens to contain a word like "Accepted" or "Wrong Answer" would
+  // falsely trigger the accepted-detection logic below.
+  function isInsideAIPanel(node) {
+    let el = node && node.nodeType === 1 ? node : (node && node.parentElement);
+    while (el) {
+      if (el.id === AI_PANEL_ID) return true;
+      el = el.parentElement;
+    }
+    return false;
+  }
+
   const observer = new MutationObserver((mutations) => {
     for (const m of mutations) {
       if (m.addedNodes.length === 0) continue;
       for (const node of m.addedNodes) {
         try {
+          if (isInsideAIPanel(node)) continue;
           const text = node && node.textContent ? node.textContent : '';
           if (/Accepted/i.test(text)) { 
             console.log('[LeetCode Extension] MutationObserver detected "Accepted" in DOM');

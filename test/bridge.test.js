@@ -217,6 +217,30 @@ test('the isolated world cannot see the page monaco global (bridge is load-beari
   assert.strictEqual(isoCtx.window.monaco, undefined);
 });
 
+test('AI panel injection failing (no addEventListener in this minimal DOM) does not break getSolution', () => {
+  // content.js calls injectAIPanel() at load time; it must self-guard so a DOM
+  // that doesn't support every method it uses (as here) can't take the whole
+  // script down with it.
+  const document = makeDocument({ title: 'Two Sum - LeetCode', viewLines: RENDERED });
+  const monaco = { editor: { getEditors: () => [fakeEditor(fakeModel(FULL_CODE))] } };
+  const { getSolution, isoCtx } = boot({ document, monaco });
+  assert.strictEqual(getSolution().code, FULL_CODE);
+  assert.strictEqual(typeof isoCtx.window.__leetcodePush.__nextHintLevel, 'function');
+});
+
+test('hint level escalates 1 -> 2 -> 3 and then caps at 3', () => {
+  const document = makeDocument({ title: 'Two Sum - LeetCode', viewLines: RENDERED });
+  const monaco = { editor: { getEditors: () => [fakeEditor(fakeModel(FULL_CODE))] } };
+  const { isoCtx } = boot({ document, monaco });
+  const nextHintLevel = isoCtx.window.__leetcodePush.__nextHintLevel;
+
+  let level = 0;
+  level = nextHintLevel(level); assert.strictEqual(level, 1);
+  level = nextHintLevel(level); assert.strictEqual(level, 2);
+  level = nextHintLevel(level); assert.strictEqual(level, 3);
+  level = nextHintLevel(level); assert.strictEqual(level, 3, 'caps at the max level rather than climbing forever');
+});
+
 // --- runner ------------------------------------------------------------------
 
 let failed = 0;
