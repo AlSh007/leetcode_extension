@@ -38,16 +38,22 @@ function callChatCompletion(providerConfig, apiKey, messages, sendResponse, resu
       "Authorization": `Bearer ${apiKey}`,
       "Content-Type": "application/json"
     },
-    body: JSON.stringify({ model: providerConfig.model, messages, temperature: 0.3, max_tokens: 1000 })
+    body: JSON.stringify({ model: providerConfig.model, messages, temperature: 0.3, max_tokens: 1500 })
   })
     .then(res => {
       if (!res.ok) return res.text().then(t => { throw new Error(`${providerConfig.label} API failed (${res.status}): ${t}`); });
       return res.json();
     })
     .then(data => {
-      const content = data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
+      const choice = data && data.choices && data.choices[0];
+      const content = choice && choice.message && choice.message.content;
       if (!content) throw new Error(`${providerConfig.label} API returned no content`);
-      sendResponse({ success: true, [resultKey]: content.trim() });
+      // finish_reason is "length" when the model was cut off by max_tokens and
+      // "stop" when it finished on its own - this is what actually tells us
+      // whether a short-looking answer is complete or truncated, instead of
+      // guessing from word count.
+      const truncated = choice.finish_reason === "length";
+      sendResponse({ success: true, [resultKey]: content.trim(), truncated });
     })
     .catch(err => {
       console.error(`[LeetCode Extension BG] ${providerConfig.label} API error:`, err);

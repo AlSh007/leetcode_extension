@@ -600,6 +600,10 @@
           font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
           background: rgba(255,161,22,0.12); color: var(--lc2gh-accent); padding: 1px 4px; border-radius: 4px; font-size: 12px;
         }
+        #${AI_PANEL_ID} .__lc2gh_ai_truncated_note {
+          margin-top: 8px; padding-top: 6px; border-top: 1px dashed var(--lc2gh-border);
+          font-size: 11px; font-style: italic; color: var(--lc2gh-accent);
+        }
         @keyframes __lc2gh_ai_pulse { 0%, 80%, 100% { opacity: .25 } 40% { opacity: 1 } }
         #${AI_PANEL_ID} .__lc2gh_ai_loading_dots span { animation: __lc2gh_ai_pulse 1.1s infinite ease-in-out; }
         #${AI_PANEL_ID} .__lc2gh_ai_loading_dots span:nth-child(2) { animation-delay: 0.15s; }
@@ -736,10 +740,11 @@
         el.innerHTML = `${escapeHtml(label)}<span class="__lc2gh_ai_loading_dots"><span>.</span><span>.</span><span>.</span></span>`;
       }
 
-      function setResult(el, text, isError) {
+      function setResult(el, text, isError, truncated) {
         el.classList.toggle('__lc2gh_ai_error', !!isError);
         el.classList.add('__lc2gh_ai_has_content');
-        el.innerHTML = formatAIText(text);
+        el.innerHTML = formatAIText(text)
+          + (truncated ? '<div class="__lc2gh_ai_truncated_note">Cut off at the token limit - the model had more to say.</div>' : '');
       }
 
       toggle.addEventListener('click', () => {
@@ -767,7 +772,7 @@
               setResult(complexityResult, (response && response.error) || 'Failed to analyze complexity.', true);
               return;
             }
-            setResult(complexityResult, response.result, false);
+            setResult(complexityResult, response.result, false, response.truncated);
           }
         );
       });
@@ -792,7 +797,7 @@
               return;
             }
             updateHintButton(level);
-            setResult(hintResult, response.hint, false);
+            setResult(hintResult, response.hint, false, response.truncated);
           }
         );
       });
